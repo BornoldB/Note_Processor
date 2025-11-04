@@ -161,7 +161,7 @@ Customize the tool's behavior by editing `settings.json`:
 ```json
 {
   "ollama": {
-    "base_url": "http://192.168.1.100:11434"
+    "base_url": "http://localhost:11434"
   }
 }
 ```
@@ -262,5 +262,6 @@ This project is open source. Feel free to modify and distribute according to you
 ---
 
 **Happy Studying! 🎓**
+
 
 *Transform your notes into knowledge with AI-powered question generation.*
