@@ -1,0 +1,26 @@
+{
+  "ollama": {
+    "base_url": "http://192.168.3.45:11434",
+    "model": "llama3.1:8b",
+    "timeout": 120,
+    "options": {
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "num_predict": 2000
+    }
+  },
+  "question_generation": {
+    "question_types": ["multiple_choice", "short_answer", "true_false", "essay"],
+    "questions_per_chunk": 4,
+    "max_chunk_size": 4000,
+    "text_input_dir": "text_output",
+    "questions_output_dir": "questions_output"
+  },
+  "recap_generation": {
+    "max_chunk_size": 6000,
+    "recap_temperature": 0.3,
+    "recap_num_predict": 3000,
+    "text_input_dir": "text_output",
+    "pdf_output_file": "study_recap.pdf"
+  }
+}
