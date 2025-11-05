@@ -21,7 +21,8 @@ class NoteProcessor:
             "pdfs",
             "pptxs", 
             "text_output",
-            "questions_output"
+            "questions_output",
+            "pdf_questionnaires"
         ]
         self.setup_directories()
     
@@ -67,6 +68,10 @@ class NoteProcessor:
         # Check question files
         question_count = self.check_files_in_directory("questions_output", [".json"])
         print(f"   ❓ Question files in questions_output/: {question_count}")
+        
+        # Check PDF questionnaires
+        pdf_questionnaire_count = self.check_files_in_directory("pdf_questionnaires", [".pdf"])
+        print(f"   📋 PDF questionnaires in pdf_questionnaires/: {pdf_questionnaire_count}")
         
         print()
     
@@ -157,6 +162,38 @@ class NoteProcessor:
             print(f"\n❌ Error during question generation: {e}")
             return False
     
+    def generate_pdf_questionnaires(self):
+        """Generate PDF questionnaires from JSON question files."""
+        json_count = self.check_files_in_directory("questions_output", [".json"])
+        
+        if json_count == 0:
+            print("❌ No JSON question files found in questions_output/ directory!")
+            print("   Please generate questions from text files first.")
+            return False
+        
+        print(f"📋 Found {json_count} JSON question file(s). Starting PDF generation...")
+        print("-" * 60)
+        
+        try:
+            # Create the PDF questionnaires directory if it doesn't exist
+            pdf_output_dir = "pdf_questionnaires"
+            if not os.path.exists(pdf_output_dir):
+                os.makedirs(pdf_output_dir)
+                print(f"   📁 Created directory: {pdf_output_dir}/")
+            
+            # Generate PDFs from existing JSON files
+            txt2quest.create_pdfs_from_existing_json("questions_output", pdf_output_dir)
+            
+            print(f"\n📋 PDF Questionnaire Generation Complete!")
+            print(f"   📄 JSON files processed: {json_count}")
+            print(f"   📁 PDFs saved to: {pdf_output_dir}/")
+            
+            return True
+            
+        except Exception as e:
+            print(f"\n❌ Error during PDF generation: {e}")
+            return False
+    
     def show_menu(self):
         """Display the main menu options."""
         print("=" * 60)
@@ -165,15 +202,16 @@ class NoteProcessor:
         print()
         print("Choose an option:")
         print("  1.  Extract text from PowerPoint files (pptxs → text)")
-        print("  2.   Extract text from PDF files (pdfs → text)")
-        print("  3.   Generate questions from text files (text → questions)")
-        print("  4.   Show current status")
-        print("  5.   Process all (PDFs + PowerPoints → text → questions)")
-        print("  6.   Exit")
+        print("  2.  Extract text from PDF files (pdfs → text)")
+        print("  3.  Generate questions from text files (text → questions)")
+        print("  4.  Generate PDF questionnaires from JSON (questions → PDFs)")
+        print("  5.  Show current status")
+        print("  6.  Process all (PDFs + PowerPoints → text → questions → PDFs)")
+        print("  7.  Exit")
         print()
     
     def process_all(self):
-        """Process all files: PDFs + PowerPoints → text → questions."""
+        """Process all files: PDFs + PowerPoints → text → questions → PDF questionnaires."""
         print("🚀 Starting complete processing pipeline...")
         print("=" * 60)
         
@@ -204,6 +242,14 @@ class NoteProcessor:
             if self.generate_questions():
                 success_count += 1
             total_operations += 1
+            print()
+            
+            # Generate PDF questionnaires (only if questions were generated successfully)
+            if success_count == total_operations:
+                print("📋 Step 4: Generating PDF questionnaires...")
+                if self.generate_pdf_questionnaires():
+                    success_count += 1
+                total_operations += 1
         
         # Summary
         print("=" * 60)
@@ -228,7 +274,7 @@ class NoteProcessor:
             self.show_menu()
             
             try:
-                choice = input("Enter your choice (1-6): ").strip()
+                choice = input("Enter your choice (1-7): ").strip()
                 print()
                 
                 if choice == "1":
@@ -241,20 +287,23 @@ class NoteProcessor:
                     self.generate_questions()
                 
                 elif choice == "4":
-                    self.display_status()
+                    self.generate_pdf_questionnaires()
                 
                 elif choice == "5":
-                    self.process_all()
+                    self.display_status()
                 
                 elif choice == "6":
+                    self.process_all()
+                
+                elif choice == "7":
                     print("👋 Thank you for using Note Processor!")
                     print("Happy studying! 🎓")
                     break
                 
                 else:
-                    print("❌ Invalid choice. Please enter a number between 1-6.")
+                    print("❌ Invalid choice. Please enter a number between 1-7.")
                 
-                if choice in ["1", "2", "3", "5"]:
+                if choice in ["1", "2", "3", "4", "6"]:
                     input("\nPress Enter to continue...")
                     print()
                 

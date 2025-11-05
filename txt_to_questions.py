@@ -9,6 +9,13 @@ import re
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 import time
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.pdfgen import canvas
+from reportlab.lib.colors import black, blue, red
 
 
 def load_settings(settings_file: str = "settings.json") -> Dict:
@@ -445,6 +452,318 @@ Response (JSON only, no other text):"""
         return stats
 
 
+class PDFQuestionnaireGenerator:
+    """Generate PDF questionnaires from JSON question files."""
+    
+    def __init__(self):
+        """Initialize the PDF generator."""
+        self.styles = getSampleStyleSheet()
+        self._setup_custom_styles()
+    
+    def _setup_custom_styles(self):
+        """Set up custom paragraph styles for the PDF."""
+        # Title style
+        self.title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=self.styles['Heading1'],
+            fontSize=20,
+            textColor=blue,
+            spaceAfter=30,
+            alignment=TA_CENTER
+        )
+        
+        # Question style
+        self.question_style = ParagraphStyle(
+            'Question',
+            parent=self.styles['Normal'],
+            fontSize=12,
+            textColor=black,
+            spaceBefore=20,
+            spaceAfter=10,
+            leftIndent=0
+        )
+        
+        # Option style
+        self.option_style = ParagraphStyle(
+            'Option',
+            parent=self.styles['Normal'],
+            fontSize=11,
+            textColor=black,
+            spaceBefore=5,
+            spaceAfter=5,
+            leftIndent=20
+        )
+        
+        # Answer style
+        self.answer_style = ParagraphStyle(
+            'Answer',
+            parent=self.styles['Normal'],
+            fontSize=10,
+            textColor=red,
+            spaceBefore=10,
+            spaceAfter=15,
+            leftIndent=0
+        )
+        
+        # Header style
+        self.header_style = ParagraphStyle(
+            'Header',
+            parent=self.styles['Normal'],
+            fontSize=10,
+            textColor=black,
+            spaceBefore=5,
+            spaceAfter=15
+        )
+    
+    def _escape_for_pdf(self, text: str) -> str:
+        """Escape text for safe PDF rendering."""
+        if not text:
+            return ""
+        
+        # Handle common unicode characters
+        replacements = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+            '×': '&times;',
+            '÷': '&divide;',
+            '≤': '&le;',
+            '≥': '&ge;',
+            '≠': '&ne;',
+            '±': '&plusmn;',
+            '²': '&sup2;',
+            '³': '&sup3;',
+            'α': '&alpha;',
+            'β': '&beta;',
+            'γ': '&gamma;',
+            'δ': '&delta;',
+            'π': '&pi;',
+            'σ': '&sigma;',
+            'μ': '&mu;',
+            'Ω': '&Omega;',
+            '°': '&deg;'
+        }
+        
+        for char, replacement in replacements.items():
+            text = text.replace(char, replacement)
+        
+        return text
+    
+    def _format_question_text(self, question: Dict, question_number: int) -> List:
+        """Format a single question for PDF rendering."""
+        elements = []
+        
+        # Question number and text
+        question_text = self._escape_for_pdf(question.get('question', ''))
+        q_type = question.get('type', 'unknown')
+        
+        question_para = Paragraph(
+            f"<b>Question {question_number}:</b> {question_text}",
+            self.question_style
+        )
+        elements.append(question_para)
+        
+        # Add question type indicator
+        type_para = Paragraph(
+            f"<i>Type: {q_type.replace('_', ' ').title()}</i>",
+            self.header_style
+        )
+        elements.append(type_para)
+        
+        # Handle different question types
+        if q_type == 'multiple_choice':
+            options = question.get('options', [])
+            if options:
+                for i, option in enumerate(options):
+                    option_text = self._escape_for_pdf(option)
+                    option_para = Paragraph(
+                        f"{chr(65+i)}. {option_text}",
+                        self.option_style
+                    )
+                    elements.append(option_para)
+        elif q_type == 'true_false':
+            elements.append(Paragraph("A. True", self.option_style))
+            elements.append(Paragraph("B. False", self.option_style))
+        elif q_type in ['short_answer', 'essay']:
+            # Add lines for written answers
+            lines_needed = 3 if q_type == 'short_answer' else 8
+            for i in range(lines_needed):
+                elements.append(Paragraph("_" * 65 , self.option_style))
+        
+        # Answer section (for answer key)
+        correct_answer = self._escape_for_pdf(str(question.get('correct_answer', 'N/A')))
+        explanation = self._escape_for_pdf(question.get('explanation', ''))
+        
+        answer_text = f"<b>Answer:</b> {correct_answer}"
+        if explanation:
+            answer_text += f"<br/><b>Explanation:</b> {explanation}"
+        
+        answer_para = Paragraph(answer_text, self.answer_style)
+        elements.append(answer_para)
+        
+        return elements
+    
+    def create_questionnaire_pdf(self, json_file_path: str, output_dir: str = None, 
+                                include_answers: bool = True, questions_per_page: int = 2) -> str:
+        """
+        Create a PDF questionnaire from a JSON questions file.
+        
+        Args:
+            json_file_path (str): Path to the JSON questions file
+            output_dir (str): Directory to save the PDF (defaults to same directory as JSON)
+            include_answers (bool): Whether to include answer key in the PDF
+            questions_per_page (int): Number of questions per page
+            
+        Returns:
+            str: Path to the generated PDF file
+        """
+        try:
+            # Load questions from JSON file
+            with open(json_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            questions = data.get('questions', [])
+            if not questions:
+                raise ValueError("No questions found in JSON file")
+            
+            # Determine output path
+            if output_dir is None:
+                output_dir = os.path.dirname(json_file_path)
+            
+            os.makedirs(output_dir, exist_ok=True)
+            
+            base_name = os.path.splitext(os.path.basename(json_file_path))[0]
+            output_filename = f"{base_name}_questionnaire.pdf"
+            output_path = os.path.join(output_dir, output_filename)
+            
+            # Create PDF document
+            doc = SimpleDocTemplate(
+                output_path,
+                pagesize=A4,
+                rightMargin=72,
+                leftMargin=72,
+                topMargin=72,
+                bottomMargin=72
+            )
+            
+            story = []
+            
+            # Title page
+            title = data.get('source_file', 'Study Questions').replace('_', ' ').title()
+            title_para = Paragraph(f"Study Questionnaire<br/>{title}", self.title_style)
+            story.append(title_para)
+            
+            # Metadata
+            generated_at = data.get('generated_at', 'Unknown')
+            model_used = data.get('model_used', 'Unknown')
+            total_questions = data.get('total_questions', len(questions))
+            
+            meta_text = f"""
+            <b>Generated:</b> {generated_at}<br/>
+            <b>AI Model:</b> {model_used}<br/>
+            <b>Total Questions:</b> {total_questions}<br/>
+            <b>Answer Key Included:</b> {"Yes" if include_answers else "No"}
+            """
+            
+            meta_para = Paragraph(meta_text, self.header_style)
+            story.append(meta_para)
+            story.append(Spacer(1, 30))
+            
+            # Instructions
+            instructions = """
+            <b>Instructions:</b><br/>
+            • Read each question carefully<br/>
+            • For multiple choice questions, select the best answer<br/>
+            • For true/false questions, choose A for True or B for False<br/>
+            • For short answer and essay questions, write your response in the space provided<br/>
+            • If answer key is included, it appears below each question in red text
+            """
+            
+            instructions_para = Paragraph(instructions, self.header_style)
+            story.append(instructions_para)
+            story.append(PageBreak())
+            
+            # Add questions
+            for i, question in enumerate(questions, 1):
+                # Add page break after every N questions (except the first)
+                if i > 1 and (i - 1) % questions_per_page == 0:
+                    story.append(PageBreak())
+                
+                # Format and add question
+                question_elements = self._format_question_text(question, i)
+                
+                for element in question_elements:
+                    story.append(element)
+                
+                # Add space between questions
+                story.append(Spacer(1, 20))
+            
+            # Build PDF
+            doc.build(story)
+            
+            return output_path
+            
+        except Exception as e:
+            raise Exception(f"Error creating PDF questionnaire: {str(e)}")
+    
+    def process_questions_directory(self, questions_dir: str = "questions_output", 
+                                  pdf_output_dir: str = None, include_answers: bool = True,
+                                  questions_per_page: int = 2) -> Dict[str, int]:
+        """
+        Process all JSON question files in a directory and create PDF questionnaires.
+        
+        Args:
+            questions_dir (str): Directory containing JSON question files
+            pdf_output_dir (str): Directory to save PDFs (defaults to questions_dir + '/pdfs')
+            include_answers (bool): Whether to include answer keys
+            questions_per_page (int): Number of questions per page
+            
+        Returns:
+            Dict with processing statistics
+        """
+        if not os.path.exists(questions_dir):
+            print(f"Error: Directory '{questions_dir}' not found")
+            return {"processed": 0, "failed": 0}
+        
+        if pdf_output_dir is None:
+            pdf_output_dir = os.path.join(questions_dir, "pdfs")
+        
+        # Get all JSON question files
+        json_files = [f for f in os.listdir(questions_dir) 
+                      if f.endswith('_questions.json')]
+        
+        if not json_files:
+            print(f"No *_questions.json files found in '{questions_dir}'")
+            return {"processed": 0, "failed": 0}
+        
+        print(f"Found {len(json_files)} question files to convert to PDF...")
+        
+        stats = {"processed": 0, "failed": 0}
+        
+        for json_file in json_files:
+            json_path = os.path.join(questions_dir, json_file)
+            
+            try:
+                pdf_path = self.create_questionnaire_pdf(
+                    json_path, 
+                    pdf_output_dir, 
+                    include_answers, 
+                    questions_per_page
+                )
+                
+                pdf_filename = os.path.basename(pdf_path)
+                print(f"  ✅ Created: {pdf_filename}")
+                stats["processed"] += 1
+                
+            except Exception as e:
+                print(f"  ❌ Failed to create PDF for {json_file}: {str(e)}")
+                stats["failed"] += 1
+        
+        return stats
+
+
 def main():
     """Main function to demonstrate usage."""
     start = time.time()
@@ -483,8 +802,56 @@ def main():
     except Exception:
         pass
 
+    # Generate PDF questionnaires from the created JSON files
+    if stats['processed'] > 0:
+        print("\n📄 Creating PDF questionnaires...")
+        pdf_generator = PDFQuestionnaireGenerator()
+        pdf_stats = pdf_generator.process_questions_directory(
+            questions_dir=generator.question_config['questions_output_dir'],
+            include_answers=True,
+            questions_per_page=2
+        )
+        
+        print(f"\n📑 PDF Generation Complete!")
+        print(f"   📄 PDFs created: {pdf_stats['processed']}")
+        print(f"   ❌ PDFs failed: {pdf_stats['failed']}")
+        if pdf_stats['processed'] > 0:
+            pdf_dir = os.path.join(generator.question_config['questions_output_dir'], "pdfs")
+            print(f"   📁 PDFs saved to: {pdf_dir}/")
+
     end = time.time()
     print(f"\n\nExecution Time: {(end-start):.4f} seconds")
+
+
+def create_pdfs_from_existing_json(questions_dir: str = "questions_output", 
+                                 include_answers: bool = True, 
+                                 questions_per_page: int = 2):
+    """
+    Standalone function to create PDFs from existing JSON question files.
+    
+    Args:
+        questions_dir (str): Directory containing JSON question files
+        include_answers (bool): Whether to include answer keys in PDFs
+        questions_per_page (int): Number of questions per page
+    """
+    print("📄 Creating PDF questionnaires from existing JSON files...")
+    
+    pdf_generator = PDFQuestionnaireGenerator()
+    stats = pdf_generator.process_questions_directory(
+        questions_dir=questions_dir,
+        include_answers=include_answers,
+        questions_per_page=questions_per_page
+    )
+    
+    print(f"\n📑 PDF Generation Complete!")
+    print(f"   📄 PDFs created: {stats['processed']}")
+    print(f"   ❌ PDFs failed: {stats['failed']}")
+    
+    if stats['processed'] > 0:
+        pdf_dir = os.path.join(questions_dir, "pdfs")
+        print(f"   📁 PDFs saved to: {pdf_dir}/")
+    
+    return stats
 
 
 if __name__ == "__main__":
